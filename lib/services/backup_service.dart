@@ -12,11 +12,11 @@ import '../services/font_service.dart';
 import '../services/importer.dart';
 import '../state/app_state.dart';
 
-/// A backup archive is structurally valid but exceeds a restore safety limit.
-class BackupArchiveLimitException implements Exception {
+/// A backup archive contains an unsupported or unsafe structure.
+class BackupArchiveValidationException implements Exception {
   final String message;
 
-  const BackupArchiveLimitException(this.message);
+  const BackupArchiveValidationException(this.message);
 
   @override
   String toString() => message;
@@ -25,15 +25,6 @@ class BackupArchiveLimitException implements Exception {
 /// 备份/恢复：书架数据 + 书源 + 阅读点 + 阅读设置 + 本地书文件（zip）
 class BackupService {
   static const manifestName = 'heiyu_backup.json';
-
-  /// Maximum number of central-directory entries accepted in a backup.
-  static const int maxRestoreEntries = 4096;
-
-  /// Maximum uncompressed size of one entry in a backup.
-  static const int maxRestoreFileBytes = 64 * 1024 * 1024;
-
-  /// Maximum total uncompressed size of all backup entries.
-  static const int maxRestoreUncompressedBytes = 256 * 1024 * 1024;
 
   /// Resolve an online book's source id against the ids created while
   /// restoring its source records. A missing mapping intentionally becomes
@@ -113,9 +104,8 @@ class BackupService {
   /// 从 zip 字节恢复（合并模式：按唯一键去重，不覆盖已有书籍）
   /// 返回恢复摘要文本
   static Future<String> restore(Uint8List zipBytes) async {
-    // Inspect central-directory metadata before ZipDecoder is allowed to
-    // inflate any entry. This is the important zip-bomb guard: the request
-    // size is only the compressed size and is not a decompression limit.
+    // Inspect structure before decoding while deliberately imposing no size
+    // limit on user-created backup packages.
     final directory = ZipDirectory.read(InputStream(zipBytes));
     _validateZipDirectory(directory);
 
@@ -138,15 +128,12 @@ class BackupService {
 
     // 1. 写入文件（books/covers/fonts）
     int fileCount = 0;
-    var actualUncompressedBytes = 0;
     for (final f in archive.files) {
       if (!f.isFile) continue;
       if (f.isSymbolicLink) {
-        throw const BackupArchiveLimitException('备份包含不支持的符号链接');
+        throw const BackupArchiveValidationException('备份包含不支持的符号链接');
       }
       final content = f.content as List<int>;
-      _checkActualEntrySize(content.length, actualUncompressedBytes);
-      actualUncompressedBytes += content.length;
 
       final parts = f.name.split('/');
       if (parts.length == 2) {
@@ -303,38 +290,22 @@ class BackupService {
     return null;
   }
 
-  /// Validates decoded entries using only their declared metadata. This is
-  /// intentionally public so tests can exercise the limit logic without
-  /// allocating a multi-megabyte fixture.
+  /// Validates decoded entries without restricting backup size.
   static void validateRestoreArchiveFiles(Iterable<ArchiveFile> files) {
-    var count = 0;
-    var total = 0;
     for (final file in files) {
-      count++;
-      if (count > maxRestoreEntries) {
-        throw const BackupArchiveLimitException('备份条目数量超过上限');
-      }
       _validateEntryName(file.name);
       if (file.isSymbolicLink) {
-        throw const BackupArchiveLimitException('备份包含不支持的符号链接');
+        throw const BackupArchiveValidationException('备份包含不支持的符号链接');
       }
-      _checkDeclaredEntrySize(file.size, total);
-      total += file.size;
     }
   }
 
   static void _validateZipDirectory(ZipDirectory directory) {
-    if (directory.totalCentralDirectoryEntries > maxRestoreEntries ||
-        directory.fileHeaders.length > maxRestoreEntries) {
-      throw const BackupArchiveLimitException('备份条目数量超过上限');
-    }
-
-    var total = 0;
     for (final header in directory.fileHeaders) {
       final encrypted = (header.generalPurposeBitFlag & 0x1) != 0 ||
           header.compressionMethod == ZipFile.zipCompressionAexEncryption;
       if (encrypted) {
-        throw const BackupArchiveLimitException('不支持加密备份');
+        throw const BackupArchiveValidationException('不支持加密备份');
       }
 
       const supportedMethods = {
@@ -343,7 +314,7 @@ class BackupService {
         ZipFile.zipCompressionBZip2,
       };
       if (!supportedMethods.contains(header.compressionMethod)) {
-        throw BackupArchiveLimitException(
+        throw BackupArchiveValidationException(
           '备份包含不支持的压缩方式：${header.compressionMethod}',
         );
       }
@@ -354,31 +325,16 @@ class BackupService {
           compressedSize == null ||
           size < 0 ||
           compressedSize < 0) {
-        throw const BackupArchiveLimitException('备份条目大小异常');
+        throw const BackupArchiveValidationException('备份条目大小异常');
       }
       _validateEntryName(header.filename);
       final mode = (header.externalFileAttributes ?? 0) >> 16;
       final isUnixSymlink =
           header.versionMadeBy >> 8 == 3 && (mode & 0xF000) == 0xA000;
       if (isUnixSymlink) {
-        throw const BackupArchiveLimitException('备份包含不支持的符号链接');
+        throw const BackupArchiveValidationException('备份包含不支持的符号链接');
       }
-      _checkDeclaredEntrySize(size, total);
-      total += size;
     }
-  }
-
-  static void _checkDeclaredEntrySize(int size, int total) {
-    if (size < 0 || size > maxRestoreFileBytes) {
-      throw const BackupArchiveLimitException('备份单个文件大小超过上限');
-    }
-    if (size > maxRestoreUncompressedBytes - total) {
-      throw const BackupArchiveLimitException('备份解压总大小超过上限');
-    }
-  }
-
-  static void _checkActualEntrySize(int size, int total) {
-    _checkDeclaredEntrySize(size, total);
   }
 
   static void _validateEntryName(String name) {
@@ -389,7 +345,7 @@ class BackupService {
         normalized.contains('\u0000') ||
         segments.contains('..') ||
         RegExp(r'^[A-Za-z]:').hasMatch(normalized)) {
-      throw const BackupArchiveLimitException('备份包含不安全的文件路径');
+      throw const BackupArchiveValidationException('备份包含不安全的文件路径');
     }
   }
 }

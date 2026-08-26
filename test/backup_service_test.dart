@@ -16,63 +16,24 @@ void main() {
     expect(BackupService.remapSourceId(null, {17: 42}), isNull);
   });
 
-  test('restore entry limits reject oversized declared files and totals', () {
-    final oversized = ArchiveFile(
+  test('restore validation does not impose a file size limit', () {
+    final largeFile = ArchiveFile(
       'books/large.epub',
-      BackupService.maxRestoreFileBytes + 1,
+      1024 * 1024 * 1024,
       const <int>[],
     );
     expect(
-      () => BackupService.validateRestoreArchiveFiles([oversized]),
-      throwsA(isA<BackupArchiveLimitException>()),
-    );
-
-    final total = [
-      ArchiveFile(
-        'books/a.epub',
-        BackupService.maxRestoreFileBytes,
-        const <int>[],
-      ),
-      ArchiveFile(
-        'books/b.epub',
-        BackupService.maxRestoreFileBytes,
-        const <int>[],
-      ),
-      ArchiveFile(
-        'books/c.epub',
-        BackupService.maxRestoreFileBytes,
-        const <int>[],
-      ),
-      ArchiveFile(
-        'books/d.epub',
-        BackupService.maxRestoreFileBytes,
-        const <int>[],
-      ),
-      ArchiveFile(
-        'books/e.epub',
-        1,
-        const <int>[],
-      ),
-    ];
-    expect(
-      () => BackupService.validateRestoreArchiveFiles(total),
-      throwsA(isA<BackupArchiveLimitException>()),
+      () => BackupService.validateRestoreArchiveFiles([largeFile]),
+      returnsNormally,
     );
   });
 
-  test('restore rejects a zip entry whose declared size is a zip bomb',
-      () async {
-    final archive = Archive()
-      ..addFile(ArchiveFile(
-        'books/declared-large.epub',
-        BackupService.maxRestoreFileBytes + 1,
-        const <int>[],
-      ));
-    final encoded = ZipEncoder().encode(archive);
-
+  test('restore validation still rejects unsafe paths', () {
     expect(
-      BackupService.restore(Uint8List.fromList(encoded!)),
-      throwsA(isA<BackupArchiveLimitException>()),
+      () => BackupService.validateRestoreArchiveFiles([
+        ArchiveFile('../outside.txt', 0, const <int>[]),
+      ]),
+      throwsA(isA<BackupArchiveValidationException>()),
     );
   });
 
@@ -88,7 +49,7 @@ void main() {
 
     expect(
       BackupService.restore(Uint8List.fromList(encoded!)),
-      throwsA(isA<BackupArchiveLimitException>()),
+      throwsA(isA<BackupArchiveValidationException>()),
     );
   });
 }

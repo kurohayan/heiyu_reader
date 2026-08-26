@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 import 'dart:typed_data';
 
 import 'backup_service.dart';
@@ -39,35 +38,18 @@ class WifiServer {
   }
 
   /// Maximum size of one uploaded TXT/EPUB file.
-  static const int maxUploadBytes = 64 * 1024 * 1024;
-
-  /// Maximum size of a ZIP submitted to the restore endpoint.
-  static const int maxRestoreBytes = 256 * 1024 * 1024;
-
-  static const int _sessionTokenBytes = 32;
+  static const int maxUploadBytes = 128 * 1024 * 1024;
 
   HttpServer? _server;
   int _port = 0;
   String _ip = '';
-  String? _token;
   final InternetAddress? _bindAddress;
   final Future<List<String>> Function()? _ipProvider;
 
   bool get running => _server != null;
   int get port => _port;
   String get ip => _ip;
-  String? get token => _token;
-
-  /// The address without credentials. This is useful for diagnostics only;
-  /// callers should use [url] when giving the address to another device.
-  String get baseUrl => 'http://$_ip:$_port';
-
-  /// The browser address, including the current runtime-only session token.
-  String get url {
-    final token = _token;
-    if (token == null) return baseUrl;
-    return '$baseUrl/?token=${Uri.encodeQueryComponent(token)}';
-  }
+  String get url => 'http://$_ip:$_port';
 
   /// 文件导入成功的回调（UI 提示）
   void Function(String bookTitle)? onImported;
@@ -125,7 +107,6 @@ class WifiServer {
     if (server == null) throw lastError ?? '端口绑定失败';
     _port = server.port;
     _server = server;
-    _token = _newSessionToken();
     server.listen(_handle, onError: (_) {});
   }
 
@@ -134,21 +115,11 @@ class WifiServer {
     _server = null;
     _port = 0;
     _ip = '';
-    _token = null;
     await server?.close(force: true);
   }
 
   Future<void> _handle(HttpRequest req) async {
     try {
-      if (!_isAuthorized(req)) {
-        await _writeJson(
-          req,
-          {'ok': false, 'msg': '访问令牌无效或已失效'},
-          statusCode: HttpStatus.unauthorized,
-        );
-        return;
-      }
-
       final path = req.uri.path;
       if (req.method == 'GET' && (path == '/' || path == '/index.html')) {
         req.response.headers.contentType = ContentType.html;
@@ -236,11 +207,9 @@ class WifiServer {
   }
 
   Future<void> _handleRestore(HttpRequest req) async {
-    final bytes = await readLimitedBytes(
-      req,
-      maxBytes: maxRestoreBytes,
-      contentLength: req.contentLength >= 0 ? req.contentLength : null,
-    );
+    final builder = BytesBuilder(copy: false);
+    await req.forEach(builder.add);
+    final bytes = builder.takeBytes();
     try {
       final summary = await BackupService.restore(bytes);
       onImported?.call('备份已恢复');
@@ -254,14 +223,6 @@ class WifiServer {
           },
           statusCode: HttpStatus.unprocessableEntity);
     }
-  }
-
-  bool _isAuthorized(HttpRequest req) {
-    final expected = _token;
-    if (expected == null) return false;
-    final supplied =
-        req.uri.queryParameters['token'] ?? req.headers.value('x-wifi-token');
-    return supplied != null && tokensEqual(supplied, expected);
   }
 
   Future<void> _writeJson(
@@ -290,28 +251,6 @@ class WifiServer {
     }
   }
 
-  String _newSessionToken() {
-    final random = Random.secure();
-    final bytes = Uint8List.fromList([
-      for (int i = 0; i < _sessionTokenBytes; i++) random.nextInt(256),
-    ]);
-    return base64UrlEncode(bytes).replaceAll('=', '');
-  }
-
-  /// Constant-time token comparison used for request authentication.
-  static bool tokensEqual(String supplied, String expected) {
-    final left = utf8.encode(supplied);
-    final right = utf8.encode(expected);
-    var difference = left.length ^ right.length;
-    final length = max(left.length, right.length);
-    for (int i = 0; i < length; i++) {
-      final a = i < left.length ? left[i] : 0;
-      final b = i < right.length ? right[i] : 0;
-      difference |= a ^ b;
-    }
-    return difference == 0;
-  }
-
   /// Reads a request body incrementally and stops as soon as it exceeds the
   /// supplied limit. [contentLength] is checked before reading any chunk.
   static Future<Uint8List> readLimitedBytes(
@@ -337,12 +276,7 @@ class WifiServer {
   }
 
   String _uploadPage() {
-    final token = _token;
-    if (token == null) throw StateError('WiFi 服务未启动');
-    final tokenLiteral = jsonEncode(token);
-    final backupUrl = '/backup?token=${Uri.encodeQueryComponent(token)}';
     const uploadLimitMb = maxUploadBytes ~/ (1024 * 1024);
-    const restoreLimitMb = maxRestoreBytes ~/ (1024 * 1024);
     return '''
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -406,20 +340,14 @@ body {
   </div>
   <input type="file" id="file" multiple accept=".txt,.epub">
   <div class="backup">
-    <a class="btn" href="$backupUrl" download="heiyu_backup.zip">⬇ 下载备份</a>
+    <a class="btn" href="/backup" download="heiyu_backup.zip">⬇ 下载备份</a>
     <button class="btn ghost" id="restoreBtn" type="button">⬆ 上传备份恢复</button>
     <input type="file" id="restoreFile" accept=".zip">
   </div>
   <div class="list" id="list"></div>
-  <div class="tip">单个书籍最大 $uploadLimitMb MB，备份恢复最大 $restoreLimitMb MB<br>上传过程中请保持此页面打开<br>文件将自动导入手机书架<br>备份包含书架、书源、阅读点、设置与本地书文件</div>
+  <div class="tip">单个书籍最大 $uploadLimitMb MB，备份恢复不限大小<br>上传过程中请保持此页面打开<br>文件将自动导入手机书架<br>备份包含书架、书源、阅读点、设置与本地书文件</div>
 </div>
 <script>
-const accessToken = $tokenLiteral;
-function authorizedPath(path) {
-  const url = new URL(path, window.location.href);
-  url.searchParams.set('token', accessToken);
-  return url.pathname + url.search;
-}
 const drop = document.getElementById('drop');
 const input = document.getElementById('file');
 const list = document.getElementById('list');
@@ -443,7 +371,7 @@ restoreFile.addEventListener('change', async () => {
   restoreBtn.disabled = true;
   restoreBtn.textContent = '恢复中…';
   try {
-    const resp = await fetch(authorizedPath('/restore'), { method: 'POST', body: f });
+    const resp = await fetch('/restore', { method: 'POST', body: f });
     const r = await resp.json();
     const row = document.createElement('div');
     row.className = 'item ' + (r.ok ? 'ok' : 'err');
@@ -473,7 +401,7 @@ function uploadOne(file) {
     const bar = row.querySelector('.bar i');
     const status = row.querySelector('.status');
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', authorizedPath('/upload?name=' + encodeURIComponent(file.name)));
+    xhr.open('POST', '/upload?name=' + encodeURIComponent(file.name));
     xhr.upload.onprogress = e => {
       if (e.lengthComputable) {
         bar.style.width = Math.round(e.loaded / e.total * 100) + '%';
