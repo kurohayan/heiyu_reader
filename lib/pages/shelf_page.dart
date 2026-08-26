@@ -621,7 +621,7 @@ class _ShelfPageState extends State<ShelfPage> {
   /// 从「文件」App 选择 TXT/EPUB 导入
   Future<void> _importFiles() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['txt', 'epub'],
         allowMultiple: true,
