@@ -50,3 +50,6 @@ app.*.map.json
 # 发布签名密钥（不要提交到 git）
 android/key.properties
 **/upload-keystore.jks
+
+# 字体由应用运行时下载，不随源码仓库分发
+assets/fonts/*.ttf
