@@ -16,7 +16,7 @@ val hasReleaseKey = keystorePropertiesFile.exists()
 
 android {
     namespace = "com.heiyu.heiyu_reader"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
