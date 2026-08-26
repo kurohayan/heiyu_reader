@@ -1,7 +1,7 @@
 name: heiyu_reader
 description: "黑羽阅读 - 电子书阅读器：本地阅读、WiFi 传书、书源订阅与多源搜索"
 publish_to: 'none'
-version: 1.1.0+2
+version: 1.0.0+1
 
 environment:
   sdk: '>=3.5.0 <4.0.0'
