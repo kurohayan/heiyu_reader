@@ -626,9 +626,10 @@ class _ShelfPageState extends State<ShelfPage> {
         allowedExtensions: ['txt', 'epub'],
         allowMultiple: true,
       );
-      if (result == null) return;
+      if (result.isEmpty) return;
       var count = 0;
-      for (final path in result.paths) {
+      for (final file in result) {
+         final path = file.path;
         if (path == null) continue;
         try {
           await BookImporter.importLocalFile(File(path));

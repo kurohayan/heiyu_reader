@@ -27,7 +27,7 @@ dependencies:
   mobile_scanner: ^7.4.0
   flutter_tts: ^4.2.5
   battery_plus: ^7.1.1
-  file_picker: ^11.0.3
+  file_picker: ^12.0.0
   receive_sharing_intent: ^1.8.1
 
 dev_dependencies:
