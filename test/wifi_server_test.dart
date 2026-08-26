@@ -6,6 +6,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:heiyu_reader/services/wifi_server.dart';
 
 void main() {
+  test('WiFi transfer uses port 12345 by default', () {
+    expect(WifiServer.defaultPort, 12345);
+  });
+
   test('limited body reader accepts the boundary and rejects the next byte',
       () async {
     final exact = await WifiServer.readLimitedBytes(

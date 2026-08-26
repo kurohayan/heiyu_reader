@@ -39,6 +39,7 @@ class WifiServer {
 
   /// Maximum size of one uploaded TXT/EPUB file.
   static const int maxUploadBytes = 128 * 1024 * 1024;
+  static const int defaultPort = 12345;
 
   HttpServer? _server;
   int _port = 0;
@@ -83,7 +84,7 @@ class WifiServer {
     }
   }
 
-  Future<void> start({int preferredPort = 8080}) async {
+  Future<void> start({int preferredPort = defaultPort}) async {
     if (_server != null) return;
     final ips = await (_ipProvider?.call() ?? ipAddresses());
     if (ips.isEmpty) throw const SocketException('未找到可用的网络地址');
