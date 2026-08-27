@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -62,6 +62,63 @@ jobs:
           keyAlias=$ANDROID_KEY_ALIAS
           storeFile=upload-keystore.jks
           EOF
+
+      - name: Validate Android signing
+        env:
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -eu
+          keystore="android/app/upload-keystore.jks"
+          test -s "$keystore" || {
+            echo "::error::Android keystore is missing or empty after restore."
+            exit 1
+          }
+
+          if ! keytool -list \
+            -keystore "$keystore" \
+            -storepass:env ANDROID_STORE_PASSWORD \
+            >/dev/null 2>"$RUNNER_TEMP/android-keystore-check.err"; then
+            echo "::error::Android keystore validation failed: check ANDROID_STORE_PASSWORD (the keystore password) or the keystore file."
+            exit 1
+          fi
+
+          if ! keytool -list \
+            -keystore "$keystore" \
+            -alias "$ANDROID_KEY_ALIAS" \
+            -storepass:env ANDROID_STORE_PASSWORD \
+            >/dev/null 2>"$RUNNER_TEMP/android-alias-check.err"; then
+            echo "::error::Android signing validation failed: check ANDROID_KEY_ALIAS. The keystore password passed."
+            exit 1
+          fi
+
+          # keytool -list accepts all three credentials, while certreq also
+          # opens the private key and therefore catches a mismatched keypass.
+          if ! keytool -list \
+            -keystore "$keystore" \
+            -alias "$ANDROID_KEY_ALIAS" \
+            -storepass:env ANDROID_STORE_PASSWORD \
+            -keypass:env ANDROID_KEY_PASSWORD \
+            >/dev/null 2>"$RUNNER_TEMP/android-key-check.err"; then
+            echo "::error::Android private-key validation failed: check ANDROID_KEY_PASSWORD. The keystore password and alias passed."
+            exit 1
+          fi
+
+          validation_csr="$RUNNER_TEMP/android-signing-validation.csr"
+          trap 'rm -f "$validation_csr"' EXIT
+          if ! keytool -certreq \
+            -keystore "$keystore" \
+            -alias "$ANDROID_KEY_ALIAS" \
+            -storepass:env ANDROID_STORE_PASSWORD \
+            -keypass:env ANDROID_KEY_PASSWORD \
+            -file "$validation_csr" \
+            >/dev/null 2>"$RUNNER_TEMP/android-keypass-check.err"; then
+            echo "::error::Android private-key validation failed: ANDROID_KEY_PASSWORD does not unlock the key for this alias. The keystore password passed."
+            exit 1
+          fi
+
+          echo "Android keystore, alias, and signing passwords validated without printing secret values."
 
       - name: Build APK
         run: flutter build apk --release
